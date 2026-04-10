@@ -1,5 +1,5 @@
 """
-Autur: Bert ten Napel, Maartje van der Hulst
+Author: Bert ten Napel, Maartje van der Hulst
 Date: 7-4-2026
 """
 
