@@ -1,5 +1,5 @@
-from .classifier import StudentenClassifier
+from .model import Model
 
 
 def model_factory():
-    return StudentenClassifier()
+    return Model()
