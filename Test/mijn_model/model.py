@@ -1,13 +1,11 @@
 import numpy as np
 import pandas as pd
 
-from sklearn.base import clone
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier, VotingClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score
-from sklearn.model_selection import StratifiedKFold, cross_val_predict
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
@@ -53,7 +51,7 @@ class Model:
         ensemble = VotingClassifier(
             estimators=[
                 ("lr", LogisticRegression(max_iter=4000, class_weight="balanced", C=0.5, random_state=42)),
-                ("et", ExtraTreesClassifier(n_estimators=300, min_samples_leaf=2, class_weight="balanced_subsample", random_state=42, n_jobs=-1)),
+                ("et", ExtraTreesClassifier(n_estimators=1000, min_samples_leaf=2, class_weight="balanced_subsample", random_state=42, n_jobs=-1)),
                 ("rf", RandomForestClassifier(n_estimators=200, min_samples_leaf=2, class_weight="balanced_subsample", random_state=42, n_jobs=-1)),
             ],
             voting="soft",
@@ -65,7 +63,6 @@ class Model:
             ("model", ensemble),
         ])
 
-        self.threshold = self._find_best_threshold(X, y)
         self.pipeline.fit(X, y)
 
     def _clean_df(self, df):
@@ -102,46 +99,30 @@ class Model:
         df = self._convert_binary_pm(df)
         return self._coerce_numeric_columns(df)
 
-    def _find_best_threshold(self, X, y):
-        cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-
-        probs = cross_val_predict(
-            clone(self.pipeline),
-            X,
-            y,
-            cv=cv,
-            method="predict_proba",
-        )[:, 0]
-
-        best_threshold = 0.5
-        best_f1 = -1
-
-        for threshold in np.linspace(0.10, 0.90, 81):
-            preds = np.where(probs >= threshold, "CHD+", "CHD-")
-            score = f1_score(y, preds, pos_label="CHD+")
-            if score > best_f1:
-                best_f1 = score
-                best_threshold = float(threshold)
-
-        return best_threshold
-
     def predict(self, filename):
         X = self._prepare_test_X(filename)
         probs = self.pipeline.predict_proba(X)[:, 0]
         return np.array(np.where(probs >= self.threshold, "CHD+", "CHD-"))
 
-    def score(self, filename):
-        df = pd.read_csv(filename)
-        df = self._clean_df(df)
+    def compare(self, x_file, y_true_file):
+        y_true = np.load(y_true_file)
 
-        if self.target_col not in df.columns:
-            raise ValueError("Geen echte labels gevonden in dit bestand.")
+        # 🔥 fix: bool → label
+        if y_true.dtype == bool:
+            y_true = np.where(y_true, "CHD+", "CHD-")
 
-        y_true = df[self.target_col].astype(str)
-        y_pred = self.predict(filename)
+        y_pred = self.predict(x_file)
+
+        return pd.DataFrame({
+            "y_true": y_true,
+            "y_pred": y_pred,
+            "correct": y_true == y_pred
+        })
+
+    def compare_scores(self, x_file, y_true_file):
+        comparison = self.compare(x_file, y_true_file)
 
         return {
-            "accuracy": accuracy_score(y_true, y_pred),
-            "f1": f1_score(y_true, y_pred, pos_label="CHD+"),
-            "threshold": self.threshold,
+            "accuracy": accuracy_score(comparison["y_true"], comparison["y_pred"]),
+            "f1": f1_score(comparison["y_true"], comparison["y_pred"], pos_label="CHD+")
         }
