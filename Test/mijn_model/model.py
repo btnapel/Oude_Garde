@@ -6,7 +6,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier, VotingClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import f1_score
+from sklearn.metrics import accuracy_score, f1_score
 from sklearn.model_selection import StratifiedKFold, cross_val_predict
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
@@ -31,6 +31,7 @@ class Model:
         X = df.drop(columns=[self.target_col] + self.drop_cols, errors="ignore")
         y = df[self.target_col].astype(str)
 
+        X = self._convert_binary_pm(X)
         X = self._coerce_numeric_columns(X)
 
         self.num_cols = [c for c in X.columns if pd.api.types.is_numeric_dtype(X[c])]
@@ -70,6 +71,14 @@ class Model:
     def _clean_df(self, df):
         return df.replace("?", np.nan).replace("", np.nan)
 
+    def _convert_binary_pm(self, X):
+        X = X.copy()
+        for col in X.columns:
+            unique_vals = set(X[col].dropna().astype(str).unique())
+            if unique_vals and unique_vals.issubset({"+", "-"}):
+                X[col] = X[col].map({"+": 1, "-": 0})
+        return X
+
     def _coerce_numeric_columns(self, X):
         X = X.copy()
         for col in X.columns:
@@ -90,6 +99,7 @@ class Model:
             df = df.drop(columns=[self.target_col], errors="ignore")
 
         df = df.drop(columns=self.drop_cols, errors="ignore")
+        df = self._convert_binary_pm(df)
         return self._coerce_numeric_columns(df)
 
     def _find_best_threshold(self, X, y):
@@ -118,4 +128,20 @@ class Model:
     def predict(self, filename):
         X = self._prepare_test_X(filename)
         probs = self.pipeline.predict_proba(X)[:, 0]
-        return np.where(probs >= self.threshold, "CHD+", "CHD-")
+        return np.array(np.where(probs >= self.threshold, "CHD+", "CHD-"))
+
+    def score(self, filename):
+        df = pd.read_csv(filename)
+        df = self._clean_df(df)
+
+        if self.target_col not in df.columns:
+            raise ValueError("Geen echte labels gevonden in dit bestand.")
+
+        y_true = df[self.target_col].astype(str)
+        y_pred = self.predict(filename)
+
+        return {
+            "accuracy": accuracy_score(y_true, y_pred),
+            "f1": f1_score(y_true, y_pred, pos_label="CHD+"),
+            "threshold": self.threshold,
+        }
